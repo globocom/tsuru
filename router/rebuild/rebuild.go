@@ -106,7 +106,35 @@ func (b *rebuilder) rebuildRoutesInRouter(ctx context.Context, appRouter appType
 	if !b.wait {
 		asyncR, _ = r.(router.AsyncRouter)
 	}
-	if optsRouter, ok := r.(router.OptsRouter); ok {
+	routerV2, isRouterV2 := r.(router.RouterV2)
+	var resultRouterV2 RebuildRoutesResult
+
+	if isRouterV2 {
+		routes, err := b.app.RoutableAddresses(ctx)
+		if err != nil {
+			return nil, err
+		}
+		opts := router.EnsureBackendOpts{
+			Opts:     map[string]interface{}{},
+			Prefixes: []router.BackendPrefix{},
+		}
+		for key, opt := range appRouter.Opts {
+			opts.Opts[key] = opt
+		}
+		for _, route := range routes {
+			opts.Prefixes = append(opts.Prefixes, router.BackendPrefix{
+				Prefix: route.Prefix,
+				Target: route.ExtraData,
+			})
+			resultRouterV2.PrefixResults = append(resultRouterV2.PrefixResults, RebuildPrefixResult{
+				Prefix: route.Prefix,
+			})
+		}
+		err = routerV2.EnsureBackend(ctx, b.app, opts)
+		if err != nil {
+			return nil, err
+		}
+	} else if optsRouter, ok := r.(router.OptsRouter); ok {
 		err = optsRouter.AddBackendOpts(ctx, b.app, appRouter.Opts)
 	} else {
 		if asyncR == nil {
@@ -159,6 +187,10 @@ func (b *rebuilder) rebuildRoutesInRouter(ctx context.Context, appRouter appType
 		if errHc != nil {
 			return nil, errHc
 		}
+	}
+
+	if isRouterV2 {
+		return &resultRouterV2, nil
 	}
 
 	prefixRouter, isPrefixRouter := r.(router.PrefixRouter)
